@@ -279,6 +279,7 @@ class GenerationService:
                 for bp in blueprints
             ]
             s.add_all(assets)
+            s.flush()
             snapshot = job_out(job, assets)
 
         task = asyncio.create_task(self._run_job(job_id), name=f"job-{job_id}")
