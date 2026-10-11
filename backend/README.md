@@ -107,3 +107,23 @@ while (["queued", "running"].includes(job.status)) {
   instances, move to a queue (Celery/RQ/arq) and Redis-backed rate limiting. Run a single worker until then.
 - Add authentication/per-user ownership before exposing publicly; project IDs are unguessable UUIDs but not secret.
 - Model IDs in `.env.example` come from your draft and are unverified; confirm them against your Gemini account.
+
+#How to run the Gamecraft backend
+## How to run the backend
+
+1. **Navigate to the backend directory:**
+   ```powershell
+   cd "C:\Users\ADMIN\OneDrive\Desktop\gamecraft-backend"
+   ```
+
+2. **Install the required dependencies:**
+   ```powershell
+   pip install -r requirements.txt
+   ```
+
+3. **Start the development server:**
+   ```powershell
+   python -m uvicorn app.main:app --reload
+   ```
+
+The server will be live and accessible at `http://127.0.0.1:8000`.
