@@ -1,17 +1,17 @@
 // =====================================================================
-// SETTINGS: change these when the backend is ready
+// SETTINGS: change these if needed
 // =====================================================================
-const API_BASE = "http://localhost:5000"; // Shabharish's server
-const DEMO_MODE = true; // true = fake data, no backend needed. Set to false for the real API.
-const STYLE_BIBLE_FROM_API = true; // false = build the style bible in the browser (if backend has no /style-bible)
+const API_ORIGIN = "http://localhost:8000"; // where Shabharish's backend runs
+const API_BASE = API_ORIGIN + "/api/v1";
+const DEMO_MODE = false; // true = fake data, no backend needed (good for a quick UI check)
+const ENGINE = "universal"; // export layout: universal | godot | unity | unreal
 const DEMO_MS = 6500; // how long the demo "generation" takes
 // =====================================================================
-// API the backend needs (all POST, JSON):
-//  /style-bible  { concept, style }  -> { palette:[5 hex], paletteNote,
-//        line:{title,desc}, shading:{..}, lighting:{..}, camera:{..}, materials:{..} }
-//  /generate     { concept, style, style_bible } -> { anchor:"url", assets:[{type,name,size,url} x6] }
-//                (order: character, environment, weapon, icon, icon, icon)
-//  /regenerate   { concept, style, style_bible, asset_type, asset_name, index } -> { url:"..." }
+// Backend flow (gamecraft-backend):
+//   POST /analyze        -> project + art bible + 4 blueprints
+//   POST /generate/batch -> job; then GET /jobs/{id} until completed/partial/failed
+//   POST /assets/{id}/regenerate
+//   GET  /projects/{id}/export?engine=...  -> ZIP with manifest.json
 // =====================================================================
 
 const ICONS = {
@@ -39,127 +39,92 @@ const ICONS = {
 };
 
 const STEP_NAMES = ["Concept", "Style bible", "Generating", "Asset pack"];
-const STYLES = [
-  "Pixel art",
-  "Hand-drawn",
-  "Low-poly 3D",
-  "Anime",
-  "Dark fantasy",
-  "Cartoon",
-];
+// label shown in the UI -> id the backend expects
+const STYLE_IDS = {
+  "Pixel art": "pixel_art",
+  "Hand-painted": "hand_painted_fantasy",
+  "Low-poly 3D": "low_poly_3d",
+  "Retro anime": "retro_anime",
+  "Dark gothic": "dark_gothic",
+  "Sci-fi vector": "sci_fi_vector",
+};
+const STYLES = Object.keys(STYLE_IDS);
+const CAT_LABEL = {
+  character: "Character",
+  environment: "Environment",
+  weapon: "Weapon",
+  icon: "Inventory icon",
+};
+const CAT_ORDER = ["character", "environment", "weapon", "icon"];
 const FOOTERS = [
   "One concept. One world. Every asset belongs.",
   "One concept. One world. Every asset belongs.",
-  "Consistency first. Every asset follows your style bible.",
-  "Transparent PNGs. Ready to drop into your game.",
+  "Every asset follows your art bible.",
+  "Your pack includes a manifest.json for your game engine.",
 ];
 const BIBLE_CARDS = [
-  { key: "line", title: "Line style", icon: "pen" },
-  { key: "shading", title: "Shading", icon: "layers" },
-  { key: "lighting", title: "Lighting", icon: "sun" },
-  { key: "camera", title: "Camera angle", icon: "box" },
-  { key: "materials", title: "Materials", icon: "gem" },
+  { key: "theme", title: "Theme", icon: "sparkles" },
+  { key: "lighting", title: "Lighting & atmosphere", icon: "sun" },
+  { key: "shape", title: "Shape language", icon: "pen" },
+  { key: "keywords", title: "Style keywords", icon: "gem" },
+  { key: "style", title: "Art style", icon: "layers", readonly: true },
 ];
 const GEN_STEPS = [
   { name: "Understanding concept", at: 0 },
-  { name: "Building style", at: 22 },
-  { name: "Creating anchor", at: 48 },
-  { name: "Generating assets", at: 72 },
-];
-const ASSET_PLAN = [
-  { type: "Character", name: "Fernwood ranger", size: 512 },
-  { type: "Environment", name: "Elderwood clearing", size: 1024 },
-  { type: "Weapon", name: "Thornwood blade", size: 512 },
-  { type: "Inventory icon", name: "Mooncap mushroom", size: 256 },
-  { type: "Inventory icon", name: "Forest elixir", size: 256 },
-  { type: "Inventory icon", name: "Whispering crystal", size: 256 },
+  { name: "Locking the style", at: 10 },
+  { name: "Generating assets", at: 20 },
+  { name: "Packing your results", at: 96 },
 ];
 
-// Demo style presets (used in DEMO_MODE, or when STYLE_BIBLE_FROM_API = false)
+// Demo-only data (used when DEMO_MODE = true)
+const DEMO_ASSETS = [
+  { category: "character", name: "Fernwood ranger" },
+  { category: "environment", name: "Elderwood clearing" },
+  { category: "weapon", name: "Thornwood blade" },
+  { category: "icon", name: "Mooncap mushroom" },
+];
 const PRESETS = {
   "Pixel art": {
     palette: ["#1f4d3a", "#5f9455", "#b7db9b", "#e8b85a", "#9575c2"],
     note: "Forest greens · amber warmth · lavender magic",
-    line: [
-      "Crisp, stepped pixel edges",
-      "Clean silhouettes. No anti-aliasing.",
-    ],
-    shading: [
-      "Soft, two-tone pixel clusters",
-      "Simple forms with just enough depth.",
-    ],
-    lighting: ["Dappled woodland glow", "Warm light from the upper left."],
-    camera: ["Three-quarter isometric", "One perspective across your world."],
-    materials: [
-      "Moss, bark & magic crystal",
-      "Natural textures with lavender accents.",
-    ],
+    lighting: "Dappled woodland glow. Warm light from the upper left.",
+    shape: "Crisp, stepped pixel edges. Clean silhouettes, no anti-aliasing.",
+    keywords: "pixel clusters, moss, bark, magic crystal",
   },
-  "Hand-drawn": {
+  "Hand-painted": {
     palette: ["#2f3a4a", "#7a9e7e", "#f2d6a2", "#d98f6b", "#8fb7c9"],
     note: "Inky blues · soft greens · warm paper",
-    line: ["Loose, inked outlines", "Slight wobble. Visible pen strokes."],
-    shading: [
-      "Cross-hatching & soft washes",
-      "Watercolor-like fills inside the lines.",
-    ],
-    lighting: ["Soft daylight", "Even light with gentle shadows."],
-    camera: [
-      "Side view, slightly tilted",
-      "Storybook framing across your world.",
-    ],
-    materials: ["Paper, ink & watercolor", "Textured paper grain throughout."],
+    lighting: "Soft daylight with gentle shadows.",
+    shape: "Loose, painterly outlines with visible brush strokes.",
+    keywords: "watercolor, paper grain, storybook",
   },
   "Low-poly 3D": {
     palette: ["#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51"],
     note: "Deep teal · sunny gold · warm coral",
-    line: ["No outlines, faceted edges", "Flat triangles define every shape."],
-    shading: ["Flat color per facet", "Hard light steps between faces."],
-    lighting: ["Single warm key light", "Strong light from the upper right."],
-    camera: [
-      "Three-quarter perspective",
-      "Slightly elevated view for every asset.",
-    ],
-    materials: [
-      "Matte plastic & stone",
-      "Simple surfaces with no fine texture.",
-    ],
+    lighting: "Single warm key light from the upper right.",
+    shape: "Faceted flat triangles, no outlines.",
+    keywords: "flat shading, matte plastic, stone",
   },
-  Anime: {
+  "Retro anime": {
     palette: ["#2b2d6e", "#4f7cff", "#ff8fb1", "#ffe28a", "#7be0c3"],
     note: "Night blues · candy pinks · bright accents",
-    line: ["Clean, thin ink lines", "Consistent line weight on every asset."],
-    shading: ["Cel shading", "Two hard-edged tones plus highlights."],
-    lighting: ["Bright, high-contrast light", "Rim light on the edges."],
-    camera: ["Front-facing, eye level", "Dynamic but consistent framing."],
-    materials: [
-      "Cloth, metal & glowing gems",
-      "Smooth surfaces with sharp highlights.",
-    ],
+    lighting: "Bright, high-contrast light with rim highlights.",
+    shape: "Clean ink outlines with cel shading.",
+    keywords: "cel shading, film grain, glowing gems",
   },
-  "Dark fantasy": {
+  "Dark gothic": {
     palette: ["#14121b", "#3b2f4a", "#7d3c4a", "#b08d57", "#8aa39b"],
     note: "Shadow violets · dried blood · tarnished gold",
-    line: ["Rough, heavy outlines", "Worn edges with ink-like texture."],
-    shading: ["Deep, painterly shadows", "Strong contrast, murky midtones."],
-    lighting: ["Low torchlight glow", "Warm light against cold shadows."],
-    camera: ["Slightly low angle", "Makes every asset feel imposing."],
-    materials: ["Iron, bone & cracked stone", "Weathered, scratched surfaces."],
+    lighting: "Low torchlight glow against cold shadows.",
+    shape: "Rough, heavy outlines with ornate detail.",
+    keywords: "iron, bone, cracked stone",
   },
-  Cartoon: {
-    palette: ["#2d2a4a", "#35b57a", "#ffd23f", "#ff6b6b", "#4dabf7"],
-    note: "Bright primaries · friendly contrast",
-    line: ["Bold, rounded outlines", "Thick lines with smooth curves."],
-    shading: [
-      "Flat color with a simple shadow",
-      "One soft shadow shape per asset.",
-    ],
-    lighting: ["Bright and cheerful", "Even light from the top."],
-    camera: [
-      "Front view, slightly above",
-      "Friendly proportions across your world.",
-    ],
-    materials: ["Soft, chunky shapes", "Simple, toy-like surfaces."],
+  "Sci-fi vector": {
+    palette: ["#0f172a", "#22d3ee", "#e879f9", "#f8fafc", "#facc15"],
+    note: "Deep space · neon cyan · plasma magenta",
+    lighting: "Cool ambient light with neon accents.",
+    shape: "Sharp geometric shapes, flat colors.",
+    keywords: "neon, hull panels, holograms",
   },
 };
 
@@ -183,88 +148,132 @@ const slug = (s) =>
     .replace(/^-|-$/g, "") || "asset";
 const shortText = (t, n = 34) =>
   t.length > n ? t.slice(0, n - 1).trimEnd() + "…" : t;
-const toHex = (c) => (/^#[0-9a-f]{6}$/i.test(c) ? c : "#000000");
+function toHex(c) {
+  c = String(c || "");
+  if (/^#[0-9a-f]{6}$/i.test(c)) return c;
+  if (/^#[0-9a-f]{3}$/i.test(c))
+    return (
+      "#" +
+      c
+        .slice(1)
+        .split("")
+        .map((x) => x + x)
+        .join("")
+    );
+  return "#000000";
+}
+function deriveTitle(text) {
+  const words = text
+    .replace(/[^\w\s'-]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  while (words.length > 2 && /^(a|an|the)$/i.test(words[0])) words.shift();
+  const t = words
+    .slice(0, 4)
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(" ");
+  return t.length >= 2 ? t : "My Game";
+}
 
 // ---------------------------------------------------------------- state
 const state = {
   step: 1,
   concept: "",
   style: "Pixel art",
-  bible: null,
+  project: null, // what /analyze returned (project_id, art_bible, blueprints)
+  bible: null, // what the style bible screen shows and edits
+  dirty: false, // true if the user edited the bible
   editing: new Set(),
-  anchor: "",
   assets: [],
   progress: 0,
+  jobInfo: null,
+  live: "",
   error: "",
 };
 const view = $("#view");
 let viewerIndex = -1;
 
-// ---------------------------------------------------------------- data layer
-async function api(path, body, timeoutMs = 120000) {
+// ---------------------------------------------------------------- API layer
+async function api(path, { method = "POST", body, timeoutMs = 120000 } = {}) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let res;
   try {
-    const res = await fetch(API_BASE + path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+    res = await fetch(API_BASE + path, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : {},
+      body: body ? JSON.stringify(body) : undefined,
       signal: ctrl.signal,
     });
-    if (!res.ok) throw new Error(`Server returned ${res.status}`);
-    return await res.json();
+  } catch (e) {
+    if (e.name === "AbortError")
+      throw new Error("The server took too long to respond.");
+    throw new Error(`Can't reach the backend at ${API_ORIGIN}. Is it running?`);
   } finally {
     clearTimeout(timer);
   }
+  if (!res.ok) {
+    let msg = `Server returned ${res.status}`;
+    try {
+      const j = await res.json();
+      if (j.error) {
+        msg = j.error.message || msg;
+        if (Array.isArray(j.error.details))
+          msg +=
+            " (" +
+            j.error.details.map((d) => `${d.field}: ${d.message}`).join("; ") +
+            ")";
+      }
+    } catch {
+      /* body wasn't JSON */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
 }
 
-function demoBible(style) {
-  const p = PRESETS[style] || PRESETS["Pixel art"];
-  const mk = (a) => ({ title: a[0], desc: a[1] });
+function fromArtBible(ab) {
+  const pal = ab.palette.slice(0, 5);
+  return {
+    palette: pal.map((p) => p.hex),
+    paletteNote: pal.map((p) => p.name).join(" · "),
+    theme: { text: ab.theme_summary },
+    lighting: { text: ab.lighting_atmosphere },
+    shape: { text: ab.silhouette_guidelines },
+    keywords: { text: ab.style_keywords.join(", ") },
+    style: { text: state.style },
+  };
+}
+
+function demoBible() {
+  const p = PRESETS[state.style] || PRESETS["Pixel art"];
   return {
     palette: [...p.palette],
     paletteNote: p.note,
-    line: mk(p.line),
-    shading: mk(p.shading),
-    lighting: mk(p.lighting),
-    camera: mk(p.camera),
-    materials: mk(p.materials),
+    theme: { text: shortText(state.concept, 120) },
+    lighting: { text: p.lighting },
+    shape: { text: p.shape },
+    keywords: { text: p.keywords },
+    style: { text: state.style },
   };
 }
 
-function normalizeBible(d) {
-  const base = demoBible(state.style);
-  const pick = (k) =>
-    d && d[k] && d[k].title
-      ? { title: String(d[k].title), desc: String(d[k].desc || "") }
-      : base[k];
-  return {
-    palette:
-      Array.isArray(d?.palette) && d.palette.length >= 3
-        ? d.palette.slice(0, 5)
-        : base.palette,
-    paletteNote: d?.paletteNote || base.paletteNote,
-    line: pick("line"),
-    shading: pick("shading"),
-    lighting: pick("lighting"),
-    camera: pick("camera"),
-    materials: pick("materials"),
-  };
-}
-
-async function getBible() {
+async function analyze() {
   if (DEMO_MODE) {
     await sleep(700);
-    return demoBible(state.style);
+    state.project = { project_id: "demo", blueprints: [] };
+    return demoBible();
   }
-  if (!STYLE_BIBLE_FROM_API) return demoBible(state.style);
-  return normalizeBible(
-    await api(
-      "/style-bible",
-      { concept: state.concept, style: state.style },
-      60000,
-    ),
-  );
+  const res = await api("/analyze", {
+    body: {
+      title: deriveTitle(state.concept),
+      genre: "Video game",
+      synopsis: state.concept,
+      art_style: STYLE_IDS[state.style],
+    },
+  });
+  state.project = res;
+  return fromArtBible(res.art_bible);
 }
 
 function placeholder(label, seed) {
@@ -273,73 +282,105 @@ function placeholder(label, seed) {
     b = c[(seed + 2) % c.length],
     d = c[(seed + 4) % c.length];
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
-    <rect x="160" y="96" width="192" height="64" fill="${b}"/>
-    <rect x="128" y="160" width="256" height="192" fill="${a}"/>
+    <rect x="160" y="96" width="192" height="64" fill="${b}"/><rect x="128" y="160" width="256" height="192" fill="${a}"/>
     <rect x="192" y="352" width="128" height="32" fill="${d}"/>
     <rect x="128" y="160" width="256" height="192" fill="none" stroke="#1d1b3a" stroke-width="8"/>
     <text x="256" y="448" text-anchor="middle" font-family="sans-serif" font-size="30" font-weight="700" fill="#1d1b3a">${esc(label)}</text></svg>`;
   return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
 }
 
-function normalizeAssets(d) {
-  const list = Array.isArray(d) ? d : d.assets || d.images;
-  if (!Array.isArray(list) || list.length === 0)
-    throw new Error("No images in the response");
-  const assets = list.slice(0, ASSET_PLAN.length).map((x, i) => {
-    const o = typeof x === "string" ? { url: x } : x;
-    return {
-      type: o.type || ASSET_PLAN[i].type,
-      name: o.name || ASSET_PLAN[i].name,
-      size: o.size || ASSET_PLAN[i].size,
-      url: o.url || o.image,
-      loading: false,
-    };
-  });
-  return { anchor: d.anchor || d.style_anchor || assets[0].url, assets };
+function toUiAsset(a, v = 0) {
+  return {
+    id: a.id,
+    type: CAT_LABEL[a.category] || a.category,
+    order: CAT_ORDER.indexOf(a.category),
+    name: a.name,
+    ratio: a.aspect_ratio || "",
+    status: a.status,
+    url: a.image_url ? API_ORIGIN + a.image_url + (v ? `?v=${v}` : "") : "",
+    error: (a.error && a.error.message) || "",
+    loading: false,
+    v,
+  };
 }
 
-async function getAssets() {
-  if (DEMO_MODE) {
-    await sleep(DEMO_MS);
-    return {
-      anchor: placeholder("Style anchor", 1),
-      assets: ASSET_PLAN.map((a, i) => ({
-        ...a,
-        url: placeholder(a.name, i),
-        loading: false,
-      })),
-    };
+// If the user edited the style bible, send the edits to the backend as extra instructions in each prompt.
+function buildBlueprints() {
+  if (!state.dirty || !state.project.blueprints) return null;
+  const b = state.bible;
+  const rules =
+    `Art direction (follow strictly): palette ${b.palette.join(", ")}. Lighting: ${b.lighting.text}. Shape language: ${b.shape.text}. Keywords: ${b.keywords.text}.`.slice(
+      0,
+      700,
+    );
+  return state.project.blueprints.map((bp) => ({
+    ...bp,
+    prompt: bp.prompt.slice(0, 1499 - rules.length) + " " + rules,
+  }));
+}
+
+async function generateReal() {
+  const body = { project_id: state.project.project_id };
+  const bps = buildBlueprints();
+  if (bps) body.blueprints = bps;
+  let job = await api("/generate/batch", { body });
+  const t0 = Date.now();
+  for (;;) {
+    state.jobInfo = { done: job.completed + job.failed, total: job.total };
+    state.progress = job.total
+      ? 20 + 76 * (state.jobInfo.done / job.total)
+      : 20;
+    const first = job.assets.find(
+      (a) => a.status === "completed" && a.image_url,
+    );
+    if (first) state.live = API_ORIGIN + first.image_url;
+    paintProgress();
+    if (["completed", "partial", "failed"].includes(job.status)) break;
+    if (Date.now() - t0 > 5 * 60 * 1000)
+      throw new Error("Generation is taking too long. Try again.");
+    await sleep(1500);
+    job = await api(`/jobs/${job.job_id}`, { method: "GET", timeoutMs: 30000 });
   }
-  return normalizeAssets(
-    await api(
-      "/generate",
-      { concept: state.concept, style: state.style, style_bible: state.bible },
-      180000,
-    ),
-  );
+  const assets = job.assets
+    .map((a) => toUiAsset(a))
+    .sort((a, b) => a.order - b.order);
+  if (!assets.some((a) => a.status === "completed")) {
+    const err = job.assets.find((a) => a.error);
+    throw new Error(err ? err.error.message : "No images were generated.");
+  }
+  return assets;
 }
 
-async function getOneAsset(i) {
+async function generateDemo() {
+  await sleep(DEMO_MS);
+  return DEMO_ASSETS.map((a, i) => ({
+    id: "demo-" + i,
+    type: CAT_LABEL[a.category],
+    order: i,
+    name: a.name,
+    ratio: "1:1",
+    status: "completed",
+    url: placeholder(a.name, i),
+    error: "",
+    loading: false,
+    v: 0,
+  }));
+}
+
+async function regenerateOne(i) {
   const a = state.assets[i];
   if (DEMO_MODE) {
     await sleep(900);
-    return placeholder(a.name, i + Math.floor(Math.random() * 5) + 1);
+    a.url = placeholder(a.name, i + Math.floor(Math.random() * 5) + 1);
+    return;
   }
-  const d = await api(
-    "/regenerate",
-    {
-      concept: state.concept,
-      style: state.style,
-      style_bible: state.bible,
-      asset_type: a.type,
-      asset_name: a.name,
-      index: i,
-    },
-    120000,
-  );
-  const url = d.url || d.image || (d.images && d.images[0]);
-  if (!url) throw new Error("No image in the response");
-  return url;
+  const out = await api(`/assets/${a.id}/regenerate`, {
+    body: {},
+    timeoutMs: 120000,
+  });
+  if (out.status !== "completed")
+    throw new Error((out.error && out.error.message) || "Regeneration failed.");
+  state.assets[i] = { ...toUiAsset(out, Date.now()), order: a.order }; // ?v= makes the browser load the new image
 }
 
 // ---------------------------------------------------------------- views
@@ -376,20 +417,21 @@ function viewConcept() {
       <button type="button" class="btn btn-yellow btn-wide" data-action="make-bible">${icon("sparkles")} Generate assets</button>
       ${state.error ? `<p class="error" role="alert">${esc(state.error)}</p>` : ""}
     </section>
-    <p class="note">${icon("box", 22)} Your starter pack: 1 character · 1 environment · 1 weapon · 3 inventory icons</p>`;
+    <p class="note">${icon("box", 22)} Your starter pack: 1 character · 1 environment · 1 weapon · 1 inventory icon</p>`;
 }
 
 function bibleCard(c) {
   const d = state.bible[c.key];
   const ed = state.editing.has(c.key);
+  const btn = c.readonly
+    ? ""
+    : `<button type="button" class="iconbtn" data-action="edit" data-key="${c.key}" aria-label="${ed ? "Save" : "Edit"} ${c.title}">${icon(ed ? "check" : "pencil")}</button>`;
   return `<article class="card">
-    <div class="card-h"><h3>${icon(c.icon)} ${c.title}</h3>
-      <button type="button" class="iconbtn" data-action="edit" data-key="${c.key}" aria-label="${ed ? "Save" : "Edit"} ${c.title}">${icon(ed ? "check" : "pencil")}</button></div>
+    <div class="card-h"><h3>${icon(c.icon)} ${c.title}</h3>${btn}</div>
     ${
       ed
-        ? `<input class="ed" data-f="${c.key}-title" value="${esc(d.title)}" aria-label="${c.title} summary">
-         <textarea class="ed" data-f="${c.key}-desc" rows="2" aria-label="${c.title} details">${esc(d.desc)}</textarea>`
-        : `<p class="b">${esc(d.title)}</p><p class="m">${esc(d.desc)}</p>`
+        ? `<textarea class="ed" data-f="${c.key}-text" rows="4" aria-label="${c.title}">${esc(d.text)}</textarea>`
+        : `<p class="b">${esc(d.text)}</p>`
     }
   </article>`;
 }
@@ -441,14 +483,20 @@ function swatchesSm() {
   return `<div class="swatches sm">${state.bible.palette.map((c) => `<div class="sw-sm" style="background:${esc(c)}"></div>`).join("")}</div>`;
 }
 
+function liveHtml() {
+  return state.live
+    ? `<img src="${esc(state.live)}" alt="First finished asset">`
+    : `<div class="skeleton"></div>`;
+}
+
 function viewGenerating() {
   return `
     ${head("A little magic. A matching world.", "We’re turning your art direction into an asset pack.", '<span class="stepno">STEP 03 / 04</span>')}
     <section class="panel run" aria-live="polite">
       <div>
-        <div class="run-h"><strong>Style anchor</strong><small>CREATING…</small></div>
-        <div class="frame"><div class="skeleton"></div></div>
-        <p class="cap">The visual north star for your entire pack.</p>
+        <div class="run-h"><strong>Live preview</strong><small>CREATING…</small></div>
+        <div class="frame" id="live">${liveHtml()}</div>
+        <p class="cap">The first finished asset shows up here.</p>
       </div>
       <div>
         <div class="pct"><span>Crafting your world</span><span id="pct">0%</span></div>
@@ -461,48 +509,65 @@ function viewGenerating() {
     </section>`;
 }
 
+let lastLive = "";
 function paintProgress() {
-  const p = Math.round(state.progress);
   const pct = $("#pct");
   if (!pct) return;
+  const p = Math.round(state.progress);
   pct.textContent = p + "%";
   $("#bar").style.width = p + "%";
-  $("#eta").textContent =
-    p >= 100
-      ? "Done!"
-      : `About ${Math.max(5, Math.round((100 - p) * (DEMO_MODE ? DEMO_MS / 100000 : 0.6)))} seconds remaining`;
+  let eta;
+  if (p >= 100) eta = "Done!";
+  else if (DEMO_MODE)
+    eta = `About ${Math.max(5, Math.round((100 - p) * (DEMO_MS / 100000)))} seconds remaining`;
+  else if (state.jobInfo)
+    eta = `${state.jobInfo.done} of ${state.jobInfo.total} assets ready`;
+  else eta = "Starting…";
+  $("#eta").textContent = eta;
   $("#steps").innerHTML = stepsHtml();
+  if (state.live && state.live !== lastLive) {
+    lastLive = state.live;
+    $("#live").innerHTML = liveHtml();
+  }
 }
 
 function assetCard(a, i) {
-  const body = a.loading
-    ? `<div class="frame loading"><span class="empty">Regenerating…</span></div>`
-    : `<div class="frame"><img src="${esc(a.url)}" alt="${esc(a.name)}" data-preview="${i}"></div>`;
+  const failed = a.status === "failed";
+  let body;
+  if (a.loading)
+    body = `<div class="frame loading"><span class="empty">Regenerating…</span></div>`;
+  else if (failed || !a.url)
+    body = `<div class="frame"><span class="fail">Couldn’t generate this one.${a.error ? " " + esc(a.error) : ""} Try Regenerate.</span></div>`;
+  else
+    body = `<div class="frame"><img src="${esc(a.url)}" alt="${esc(a.name)}" data-preview="${i}"></div>`;
+  const noImg = a.loading || failed || !a.url;
   return `<article class="asset">
     <p class="type">${esc(a.type)}</p><p class="name">${esc(a.name)}</p>
     ${body}
-    <div class="meta"><span>${a.size ? `${a.size} × ${a.size}` : ""}</span><span>PNG · Transparent</span></div>
+    <div class="meta"><span>${esc(a.ratio)}</span><span>Generated image</span></div>
     <div class="btns">
-      <button type="button" class="btn" data-action="preview" data-i="${i}" ${a.loading ? "disabled" : ""}>Preview</button>
+      <button type="button" class="btn" data-action="preview" data-i="${i}" ${noImg ? "disabled" : ""}>Preview</button>
       <button type="button" class="btn" data-action="regen" data-i="${i}" ${a.loading ? "disabled" : ""}>Regenerate</button>
-      <button type="button" class="btn btn-yellow" data-action="download" data-i="${i}" ${a.loading ? "disabled" : ""}>Download</button>
+      <button type="button" class="btn btn-yellow" data-action="download" data-i="${i}" ${noImg ? "disabled" : ""}>Download</button>
     </div></article>`;
 }
 
 function viewPack() {
   const n = state.assets.length;
+  const ok = state.assets.filter((a) => a.status === "completed").length;
+  const thumb = (state.assets.find((a) => a.url) || {}).url || "";
   return `
-    ${head("Your world, ready to play.", `${n} assets. One world. Made to belong together.`, `<span class="ready">${icon("circleCheck", 18)} ${n} / ${n} READY</span>`)}
+    ${head("Your world, ready to play.", `${n} assets. One world. Made to belong together.`, `<span class="ready">${icon("circleCheck", 18)} ${ok} / ${n} READY</span>`)}
     <section class="anchor">
-      <div class="thumb"><img src="${esc(state.anchor)}" alt="Style anchor"></div>
-      <div class="info"><strong>Style anchor</strong><span>${esc(shortText(state.concept, 40))}</span>
-        <small>${esc(state.style)} · ${esc(state.bible.camera.title)}</small></div>
+      <div class="thumb">${thumb ? `<img src="${esc(thumb)}" alt="">` : ""}</div>
+      <div class="info"><strong>Art bible</strong><span>${esc(shortText(state.concept, 40))}</span>
+        <small>${esc(state.style)}</small></div>
       <div class="pal"><small>YOUR PALETTE</small>${swatchesSm()}</div>
     </section>
     <div class="grid">${state.assets.map(assetCard).join("")}</div>
     ${state.error ? `<p class="error" role="alert">${esc(state.error)}</p>` : ""}
     <div class="pack-actions">
-      <button type="button" class="btn btn-yellow btn-wide" data-action="zip">${icon("download")} Download all as ZIP</button>
+      <button type="button" class="btn btn-yellow btn-wide" data-action="zip">${icon("download")} Download pack (ZIP + manifest)</button>
       <button type="button" class="btn btn-wide btn-plain" data-action="restart">${icon("refresh")} Start over</button>
     </div>`;
 }
@@ -513,6 +578,7 @@ function render() {
     state.step - 1
   ]();
   $("#foot-left").textContent = FOOTERS[state.step - 1];
+  lastLive = state.live;
 }
 
 function go(n) {
@@ -527,17 +593,22 @@ function go(n) {
 function collectEdits() {
   state.editing.forEach((k) => {
     if (k === "palette") {
-      state.bible.palette = [
-        ...view.querySelectorAll('[data-f="palette"]'),
-      ].map((el) => el.value);
+      const vals = [...view.querySelectorAll('[data-f="palette"]')].map(
+        (el) => el.value,
+      );
+      if (
+        vals.length &&
+        vals.join() !== state.bible.palette.map(toHex).join()
+      ) {
+        state.bible.palette = vals;
+        state.dirty = true;
+      }
     } else {
-      const t = view.querySelector(`[data-f="${k}-title"]`),
-        d = view.querySelector(`[data-f="${k}-desc"]`);
-      if (t && d)
-        state.bible[k] = {
-          title: t.value.trim() || state.bible[k].title,
-          desc: d.value.trim(),
-        };
+      const t = view.querySelector(`[data-f="${k}-text"]`);
+      if (t && t.value.trim() && t.value.trim() !== state.bible[k].text) {
+        state.bible[k].text = t.value.trim();
+        state.dirty = true;
+      }
     }
   });
 }
@@ -545,9 +616,9 @@ function collectEdits() {
 // ---------------------------------------------------------------- actions
 async function makeBible(btn) {
   const text = state.concept.trim();
-  if (!text) {
+  if (text.length < 10) {
     state.error =
-      "Enter a game concept first, like “a sci-fi game on a space station”.";
+      "Add a bit more detail (at least 10 characters), like “a sci-fi game on a space station”.";
     render();
     $("#concept").focus();
     return;
@@ -557,14 +628,12 @@ async function makeBible(btn) {
   btn.disabled = true;
   btn.innerHTML = `${icon("loader")} Building your style…`;
   try {
-    state.bible = await getBible();
+    state.bible = await analyze();
+    state.dirty = false;
     state.editing.clear();
     go(2);
   } catch (err) {
-    state.error =
-      err.name === "AbortError"
-        ? "That took too long. Try again in a moment."
-        : `Couldn’t build the style bible (${err.message}). Check that the backend is running, then try again.`;
+    state.error = `Couldn’t build the style: ${err.message}`;
     render();
   }
 }
@@ -574,11 +643,12 @@ async function regenBible(btn) {
   btn.disabled = true;
   btn.innerHTML = `${icon("loader")} Regenerating…`;
   try {
-    state.bible = await getBible();
+    state.bible = await analyze();
+    state.dirty = false;
     state.editing.clear();
     render();
   } catch (err) {
-    state.error = `Couldn’t regenerate the style (${err.message}).`;
+    state.error = `Couldn’t regenerate the style: ${err.message}`;
     render();
   }
 }
@@ -588,29 +658,37 @@ async function startGenerate() {
   state.editing.clear();
   state.error = "";
   state.progress = 0;
+  state.jobInfo = null;
+  state.live = "";
   go(3);
-  const total = DEMO_MODE ? DEMO_MS : 60000;
-  const t0 = performance.now();
-  const timer = setInterval(() => {
-    state.progress = Math.min(92, ((performance.now() - t0) / total) * 92);
-    paintProgress();
-  }, 250);
-  paintProgress();
+  let timer = null;
   try {
-    const r = await getAssets();
-    clearInterval(timer);
+    let assets;
+    if (DEMO_MODE) {
+      const t0 = performance.now();
+      timer = setInterval(() => {
+        state.progress = Math.min(
+          92,
+          ((performance.now() - t0) / DEMO_MS) * 92,
+        );
+        paintProgress();
+      }, 250);
+      paintProgress();
+      assets = await generateDemo();
+    } else {
+      state.progress = 10;
+      paintProgress();
+      assets = await generateReal();
+    }
+    if (timer) clearInterval(timer);
     state.progress = 100;
     paintProgress();
     await sleep(600);
-    state.anchor = r.anchor;
-    state.assets = r.assets;
+    state.assets = assets;
     go(4);
   } catch (err) {
-    clearInterval(timer);
-    state.error =
-      err.name === "AbortError"
-        ? "Generation took too long. Try again in a moment."
-        : `Couldn’t generate assets (${err.message}). Check that the backend is running, then try again.`;
+    if (timer) clearInterval(timer);
+    state.error = `Couldn’t generate assets: ${err.message}`;
     go(2);
   }
 }
@@ -620,77 +698,71 @@ async function regenAsset(i) {
   state.assets[i].loading = true;
   render();
   try {
-    state.assets[i].url = await getOneAsset(i);
+    await regenerateOne(i);
   } catch (err) {
-    state.error = `Couldn’t regenerate “${state.assets[i].name}” (${err.message}).`;
+    state.error = `Couldn’t regenerate “${state.assets[i].name}”: ${err.message}`;
   }
   state.assets[i].loading = false;
   render();
 }
 
-async function saveFile(url, baseName) {
-  const blob = await (await fetch(url)).blob();
-  const ext = blob.type.includes("svg") ? "svg" : "png";
+function extFor(blob) {
+  const t = (blob.type || "").split("/")[1] || "png";
+  return t.replace("svg+xml", "svg").replace("jpeg", "jpg");
+}
+function saveBlob(blob, filename) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `${baseName}.${ext}`;
+  a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 async function downloadAsset(i) {
   const a = state.assets[i];
-  if (!a) return;
+  if (!a || !a.url) return;
   try {
-    await saveFile(a.url, `gamecraft-${slug(a.name)}`);
+    const blob = await (await fetch(a.url)).blob();
+    saveBlob(blob, `gamecraft-${slug(a.name)}.${extFor(blob)}`);
   } catch {
     window.open(a.url, "_blank");
-  } // fallback if the image host blocks fetch
+  } // fallback if the browser blocks the download
 }
 
 async function downloadZip(btn) {
-  if (typeof JSZip === "undefined") {
-    state.error =
-      "ZIP tool didn’t load. Check your internet connection and refresh.";
+  if (DEMO_MODE) {
+    state.error = "ZIP export needs the real backend. Set DEMO_MODE = false.";
     render();
     return;
   }
   btn.disabled = true;
   btn.innerHTML = `${icon("loader")} Packing…`;
-  const zip = new JSZip();
-  const files = [
-    { name: "style-anchor", url: state.anchor },
-    ...state.assets.map((a) => ({ name: slug(a.name), url: a.url })),
-  ];
-  const manifest = {
-    concept: state.concept,
-    style: state.style,
-    style_bible: state.bible,
-    assets: [],
-  };
-  for (const f of files) {
-    try {
-      const blob = await (await fetch(f.url)).blob();
-      const file = `${f.name}.${blob.type.includes("svg") ? "svg" : "png"}`;
-      zip.file(file, blob);
-      manifest.assets.push({ name: f.name, file });
-    } catch {
-      /* skip files that can't be fetched */
+  try {
+    const res = await fetch(
+      `${API_BASE}/projects/${state.project.project_id}/export?engine=${ENGINE}`,
+    );
+    if (!res.ok) {
+      let msg = `Server returned ${res.status}`;
+      try {
+        msg = (await res.json()).error.message || msg;
+      } catch {
+        /* not JSON */
+      }
+      throw new Error(msg);
     }
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = /filename="?([^";]+)"?/.exec(cd);
+    saveBlob(await res.blob(), m ? m[1] : "gamecraft-asset-pack.zip");
+    state.error = "";
+  } catch (err) {
+    state.error = `Couldn’t export the pack: ${err.message}`;
   }
-  zip.file("manifest.json", JSON.stringify(manifest, null, 2));
-  const out = await zip.generateAsync({ type: "blob" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(out);
-  a.download = "gamecraft-asset-pack.zip";
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   render();
 }
 
 function openViewer(i) {
   const a = state.assets[i];
-  if (!a) return;
+  if (!a || !a.url) return;
   viewerIndex = i;
   $("#viewer-img").src = a.url;
   $("#viewer-img").alt = a.name;
@@ -747,6 +819,7 @@ document.addEventListener("click", (e) => {
     case "restart":
       state.assets = [];
       state.bible = null;
+      state.project = null;
       state.error = "";
       go(1);
       break;

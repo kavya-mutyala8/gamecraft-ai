@@ -673,3 +673,10 @@ dialog img {
     transform: none;
   }
 }
+
+.frame .fail {
+  color: var(--danger);
+  padding: 12px;
+  text-align: center;
+  font-size: 0.85rem;
+}
