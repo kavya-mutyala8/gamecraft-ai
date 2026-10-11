@@ -184,3 +184,4 @@ def test_regenerate_on_cached_session(tmp_path):
     s = load_cached_set(find_cached("pirate_cats", None, str(tmp_path / "c")), str(tmp_path / "o"))
     assert s.provider is None
     assert regenerate_asset(s, "weapon")["status"] == "done"
+    #-
