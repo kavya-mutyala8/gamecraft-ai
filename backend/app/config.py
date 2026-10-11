@@ -15,11 +15,16 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
 
     # --- AI provider -------------------------------------------------------
-    # auto   -> Gemini if GEMINI_API_KEY is set, otherwise the offline mock
-    # gemini -> Gemini only (fails at startup without a key)
-    # mock   -> offline placeholder provider (no network, no key)
-    ai_provider: Literal["auto", "gemini", "mock"] = "auto"
+    # auto       -> Cloudflare if CF_* are set, else Gemini if GEMINI_API_KEY is set, else the offline mock
+    # cloudflare -> Cloudflare Workers AI only (free tier, FLUX.1 schnell images)
+    # gemini     -> Gemini only (fails at startup without a key)
+    # mock       -> offline placeholder provider (no network, no key)
+    ai_provider: Literal["auto", "gemini", "cloudflare", "mock"] = "auto"
     gemini_api_key: str = ""
+    cf_account_id: str = ""
+    cf_api_token: str = ""
+    cf_image_model: str = "@cf/black-forest-labs/flux-1-schnell"
+    cf_text_model: str = "@cf/meta/llama-3.1-8b-instruct"
     # Model IDs are configurable because preview model names change often.
     # Verify these against the Gemini model list for your account.
     thinking_model: str = "gemini-3.1-pro-preview"

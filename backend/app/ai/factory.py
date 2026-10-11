@@ -10,9 +10,19 @@ logger = logging.getLogger("gamecraft")
 def build_provider(settings: Settings) -> AIProvider:
     choice = settings.ai_provider
     if choice == "auto":
-        choice = "gemini" if settings.gemini_api_key else "mock"
+        if settings.cf_account_id and settings.cf_api_token:
+            choice = "cloudflare"
+        elif settings.gemini_api_key:
+            choice = "gemini"
+        else:
+            choice = "mock"
         if choice == "mock" and settings.environment == "production":
-            raise ServiceUnavailableError("Production requires GEMINI_API_KEY (or AI_PROVIDER=gemini).")
+            raise ServiceUnavailableError("Production requires an AI provider key (Cloudflare or Gemini).")
+
+    if choice == "cloudflare":
+        from app.ai.cloudflare import CloudflareProvider
+
+        return CloudflareProvider(settings)
 
     if choice == "gemini":
         from app.ai.gemini import GeminiProvider
