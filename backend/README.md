@@ -109,7 +109,6 @@ while (["queued", "running"].includes(job.status)) {
 - Model IDs in `.env.example` come from your draft and are unverified; confirm them against your Gemini account.
 
 # How to run the Gamecraft backend
-## How to run the backend
 
 1. **Navigate to the backend directory:**
    ```powershell
